@@ -23,7 +23,6 @@ func read(ws *websocket.Conn) {
 		}
 		c <- message
 	}
-
 }
 
 func receive(ws *websocket.Conn) {
