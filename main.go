@@ -7,8 +7,18 @@ import (
 	"net/http"
 )
 
-var upgrader = websocket.Upgrader{}
-var c chan []byte
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+type Message struct {
+	Data []byte
+	Conn *websocket.Conn
+}
+
+var c chan *Message
 
 func read(ws *websocket.Conn) {
 	for {
@@ -21,24 +31,25 @@ func read(ws *websocket.Conn) {
 			_ = ws.Close()
 			return
 		}
-		c <- message
+		c <- &Message{
+			Conn: ws,
+			Data: message,
+		}
 	}
 }
 
-func receive(ws *websocket.Conn) {
+func send() {
 	for {
 		message := <-c
-		fmt.Println(message)
 		for currConn := range users {
-			if currConn != ws {
-				err := currConn.WriteMessage(websocket.TextMessage, message)
+			if currConn != message.Conn {
+				err := currConn.WriteMessage(websocket.TextMessage, message.Data)
 				if err != nil {
 					fmt.Println(err)
 				}
 			}
 		}
 	}
-
 }
 
 var users map[*websocket.Conn]bool
@@ -55,11 +66,12 @@ func newConnection(w http.ResponseWriter, r *http.Request) {
 	users[conn] = true
 	log.Println("New connection was upgraded")
 	go read(conn)
-	go receive(conn)
+
 }
 
 func main() {
-	c = make(chan []byte)
+	c = make(chan *Message)
+	go send()
 	http.HandleFunc("/ws", newConnection)
 	log.Fatal(http.ListenAndServe(":8000", nil))
 }
