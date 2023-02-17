@@ -11,7 +11,7 @@ import (
 var (
 	c        chan *models.Message
 	rooms    []models.Room
-	users    map[*websocket.Conn]bool
+	users    map[models.Client]bool
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true
@@ -21,52 +21,48 @@ var (
 
 func newConnection(c *gin.Context) {
 	if users == nil {
-		users = make(map[*websocket.Conn]bool)
+		users = make(map[models.Client]bool)
 	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Println(err, " АПГРЕЙД")
+		log.Println(err)
 		return
 	}
 	cl := models.Client{
 		Ws:   conn,
 		Room: 0,
 	}
-	users[conn] = true
-	log.Println("New connection was upgraded")
-	go read(&cl)
-
-}
-
-func read(cl *models.Client) {
+	users[cl] = true
 	for {
-		mt, message, err := cl.Ws.ReadMessage()
+		_, bytes, err := cl.Ws.ReadMessage()
 		if err != nil {
-			log.Println(err, " ЧТЕНИИЕ")
-			break
+			if closeError, ok := err.(*websocket.CloseError); ok {
+				if websocket.IsCloseError(closeError, closeError.Code) {
+
+					break
+				}
+			}
+			log.Println(err)
+			continue
 		}
-		if mt == websocket.CloseMessage {
-			delete(users, cl.Ws)
-			_ = cl.Ws.Close()
-			return
-		}
-		c <- &models.Message{
+		message := models.Message{
+			Data: bytes,
 			Conn: cl.Ws,
-			Data: message,
 		}
+
+		if err = send(&message); err != nil {
+		}
+
 	}
 }
 
-func send() {
-	for {
-		message := <-c
-		for currConn := range users {
-			if currConn != message.Conn {
-				err := currConn.WriteMessage(websocket.TextMessage, message.Data)
-				if err != nil {
-					log.Println(err, "ОТПРАВКА")
-				}
+func send(message *models.Message) error {
+	for currUser := range users {
+		if currUser.Ws != message.Conn {
+			if err := currUser.Ws.WriteMessage(websocket.TextMessage, message.Data); err != nil {
+				log.Println(err)
 			}
 		}
 	}
+	return nil
 }
